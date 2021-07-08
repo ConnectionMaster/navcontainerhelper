@@ -1,8 +1,4 @@
-﻿function Log([string]$line, [string]$color = "Gray") { 
-    Write-Host -ForegroundColor $color $line
-}
-
-function Get-DefaultCredential {
+﻿function Get-DefaultCredential {
     Param(
         [string]$Message,
         [string]$DefaultUserName,
@@ -238,9 +234,9 @@ function Expand-7zipArchive {
     $7zipPath = "$env:ProgramFiles\7-Zip\7z.exe"
 
     $use7zip = $false
-    if ($bcContainerHelperConfig.use7zipIfAvailable -and (Test-Path -Path $7zipPath -PathType Leaf)) {
+    if ((Get-ContainerHelperConfig).use7zipIfAvailable -and (Test-Path -Path $7zipPath -PathType Leaf)) {
         try {
-            $use7zip = [decimal]::Parse([System.Diagnostics.FileVersionInfo]::GetVersionInfo($7zipPath).FileVersion, [System.Globalization.CultureInfo]::InvariantCulture) -ge 19
+            $use7zip = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($7zipPath).FileMajorPart -ge 19
         }
         catch {
             $use7zip = $false
@@ -269,8 +265,14 @@ function GetTestToolkitApps {
 
     Invoke-ScriptInBCContainer -containerName $containerName -scriptblock { Param($includeTestLibrariesOnly, $includeTestFrameworkOnly, $includeTestRunnerOnly, $includePerformanceToolkit)
     
+        $version = [Version](Get-Item "C:\Program Files\Microsoft Dynamics NAV\*\Service\Microsoft.Dynamics.Nav.Server.exe").VersionInfo.FileVersion
+
         # Add Test Framework
-        $apps = @(get-childitem -Path "C:\Applications\TestFramework\TestRunner\*.*" -recurse -filter "*.app")
+        $apps = @()
+        if (($version -ge [Version]"19.0.0.0") -and (Test-Path 'C:\Applications\TestFramework\TestLibraries\permissions mock')) {
+            $apps += @(get-childitem -Path "C:\Applications\TestFramework\TestLibraries\permissions mock\*.*" -recurse -filter "*.app")
+        }
+        $apps += @(get-childitem -Path "C:\Applications\TestFramework\TestRunner\*.*" -recurse -filter "*.app")
 
         if (!$includeTestRunnerOnly) {
             $apps += @(get-childitem -Path "C:\Applications\TestFramework\TestLibraries\*.*" -recurse -filter "*.app")
@@ -284,7 +286,7 @@ function GetTestToolkitApps {
                 if (!$includeTestLibrariesOnly) {
     
                     # Add Tests
-                    $apps += @(get-childitem -Path "C:\Applications\*.*" -recurse -filter "Microsoft_Tests-*.app") | Where-Object { $_ -notlike "*\Microsoft_Tests-TestLibraries.app" -and $_ -notlike "*\Microsoft_Tests-Marketing.app" -and $_ -notlike "*\Microsoft_Tests-SINGLESERVER.app" }
+                    $apps += @(get-childitem -Path "C:\Applications\*.*" -recurse -filter "Microsoft_Tests-*.app") | Where-Object { $_ -notlike "*\Microsoft_Tests-TestLibraries.app" -and ($version.Major -ge 17 -or ($_ -notlike "*\Microsoft_Tests-Marketing.app")) -and $_ -notlike "*\Microsoft_Tests-SINGLESERVER.app" }
                 }
             }
         }
@@ -308,11 +310,12 @@ function GetTestToolkitApps {
 
 function GetExtenedErrorMessage {
     Param(
-        [System.Net.WebException] $webException
+        $exception
     )
 
-    $message = $webException.Message
+    $message = $exception.Message
     try {
+        $webException = [System.Net.WebException]$exception
         $webResponse = $webException.Response
         $reqstream = $webResponse.GetResponseStream()
         $sr = new-object System.IO.StreamReader $reqstream

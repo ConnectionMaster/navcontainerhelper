@@ -37,6 +37,9 @@ function New-BcContainerTenant {
         [string] $applicationInsightsKey = ""
     )
 
+$telemetryScope = InitTelemetryScope -name $MyInvocation.InvocationName -parameterValues $PSBoundParameters -includeParameters @()
+try {
+
     Write-Host "Creating Tenant $tenantId on $containerName"
 
     if ($tenantId -eq "tenant") {
@@ -56,7 +59,7 @@ function New-BcContainerTenant {
             $sqlCredential = $null
         }
 
-        if (Test-Path "c:\run\my\updatehosts.ps1") {
+        if ((Test-Path "c:\run\my\updatehosts.ps1") -or (Test-Path "c:\run\my\updatecontainerhosts.ps1")) {
             $hostname = hostname
             $dotidx = $hostname.indexOf('.')
             if ($dotidx -eq -1) { $dotidx = $hostname.Length }
@@ -91,11 +94,24 @@ function New-BcContainerTenant {
 
             if ($ip -ne "127.0.0.1") {
                 . "c:\run\my\updatehosts.ps1" -hostsFile "c:\driversetc\hosts" -theHostname $tenantHostname -theIpAddress $ip
+                . "c:\run\my\updatehosts.ps1" -hostsFile "c:\windows\system32\drivers\etc\hosts" -theHostname $tenantHostname -theIpAddress $ip
             }
         }
+        elseif (Test-Path "c:\run\my\updatecontainerhosts.ps1") {
+            . "c:\run\my\updatecontainerhosts.ps1" -hostsFile "c:\windows\system32\drivers\etc\hosts" -theHostname $tenantHostname -theIpAddress "127.0.0.1"
+        }
+
 
     } -ArgumentList $containerName, $tenantId, $sqlCredential, $sourceDatabase, $destinationDatabase, $alternateId, $doNotCopyDatabase, $allowAppDatabaseWrite, $applicationInsightsKey
     Write-Host -ForegroundColor Green "Tenant successfully created"
+}
+catch {
+    TrackException -telemetryScope $telemetryScope -errorRecord $_
+    throw
+}
+finally {
+    TrackTrace -telemetryScope $telemetryScope
+}
 }
 Set-Alias -Name New-NavContainerTenant -Value New-BcContainerTenant
 Export-ModuleMember -Function New-BcContainerTenant -Alias New-NavContainerTenant

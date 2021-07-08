@@ -24,10 +24,13 @@ function Copy-AlSourceFiles {
         [ScriptBlock] $alFileStructure
     )
 
+$telemetryScope = InitTelemetryScope -name $MyInvocation.InvocationName -parameterValues $PSBoundParameters -includeParameters @()
+try {
+
     Write-Host "Copying Al Source Files from $Path to $Destination"
 
     if ($alFileStructure) {
-        $types = @('enum', 'page', 'table', 'codeunit', 'report', 'query', 'xmlport', 'profile', 'dotnet', 'enumextension', 'pageextension', 'tableextension', 'interface')
+        $types = @('enum', 'page', 'table', 'codeunit', 'report', 'query', 'xmlport', 'profile', 'dotnet', 'enumextension', 'pageextension', 'tableextension', 'interface', 'entitlement', 'permissionset', 'permissionsetextension')
         $extensions = @(".al",".xlf",".lcl")
 
         $files = Get-ChildItem -Path $Path -Recurse:$Recurse
@@ -67,7 +70,7 @@ function Copy-AlSourceFiles {
                     }
                     else {
                         $line = $line.SubString($type.Length).TrimStart()
-                        if ($type -eq "profile" -or $type -eq "interface") {
+                        if ($type -eq "profile" -or $type -eq "interface" -or $type -eq "entitlement") {
                             $id = ''
                         }
                         else {
@@ -202,5 +205,13 @@ function Copy-AlSourceFiles {
     else {
         Copy-Item -Path $Path -Destination $Destination -Recurse:$Recurse -Force | Out-Null
     }
+}
+catch {
+    TrackException -telemetryScope $telemetryScope -errorRecord $_
+    throw
+}
+finally {
+    TrackTrace -telemetryScope $telemetryScope
+}
 }
 Export-ModuleMember -Function Copy-AlSourceFiles

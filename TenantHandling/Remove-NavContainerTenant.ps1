@@ -25,6 +25,9 @@ function Remove-BcContainerTenant {
         [switch] $doNotRemoveDatabase
     )
 
+$telemetryScope = InitTelemetryScope -name $MyInvocation.InvocationName -parameterValues $PSBoundParameters -includeParameters @()
+try {
+
     Write-Host "Removing Tenant $tenantId from $containerName"
 
     if ($tenantId -eq "tenant") {
@@ -58,10 +61,22 @@ function Remove-BcContainerTenant {
             $tenantHostname = $hostname.insert($dotidx,"-$tenantId")
 
             . "c:\run\my\updatehosts.ps1" -hostsFile "c:\driversetc\hosts" -theHostname $tenantHostname -theIpAddress ""
+            . "c:\run\my\updatehosts.ps1" -hostsFile "c:\windows\system32\drivers\etc\hosts" -theHostname $tenantHostname -theIpAddress ""
+        }
+        elseif (Test-Path "c:\run\my\updatecontainerhosts.ps1") {
+            . "c:\run\my\updatecontainerhosts.ps1" -hostsFile "c:\windows\system32\drivers\etc\hosts" -theHostname $tenantHostname -theIpAddress ""
         }
 
     } -ArgumentList $tenantId, $sqlCredential, $databaseName, $doNotRemoveDatabase
     Write-Host -ForegroundColor Green "Tenant successfully removed"
+}
+catch {
+    TrackException -telemetryScope $telemetryScope -errorRecord $_
+    throw
+}
+finally {
+    TrackTrace -telemetryScope $telemetryScope
+}
 }
 Set-Alias -Name Remove-NavContainerTenant -Value Remove-BcContainerTenant
 Export-ModuleMember -Function Remove-BcContainerTenant -Alias Remove-NavContainerTenant

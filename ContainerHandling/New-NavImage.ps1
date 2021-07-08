@@ -24,7 +24,7 @@
  .Parameter multitenant
   Adding this parameter creates an image with multitenancy
  .Parameter addFontsFromPath
-  Enumerate all fonts from this path and install them in the container
+  Enumerate all fonts from this path or array of paths and install them in the container
 #>
 function New-BcImage {
     Param (
@@ -39,7 +39,7 @@ function New-BcImage {
         [switch] $skipDatabase,
         [switch] $multitenant,
         [switch] $filesOnly,
-        [string] $addFontsFromPath = "",
+        [string[]] $addFontsFromPath = @(""),
         [string] $licenseFile = "",
         [switch] $includeTestToolkit,
         [switch] $includeTestLibrariesOnly,
@@ -84,7 +84,10 @@ function New-BcImage {
         $baseImage = $bestGenericImageName
     }
 
-    if ($os.BuildNumber -eq 19042) { 
+    if ($os.BuildNumber -eq 19043) { 
+        $hostOs = "21H1"
+    }
+    elseif ($os.BuildNumber -eq 19042) { 
         $hostOs = "20H2"
     }
     elseif ($os.BuildNumber -eq 19041) { 
@@ -285,6 +288,9 @@ function New-BcImage {
             elseif ("$containerOsVersion".StartsWith('10.0.19042.')) {
                 $containerOs = "20H2"
             }
+            elseif ("$containerOsVersion".StartsWith('10.0.19043.')) {
+                $containerOs = "21H1"
+            }
             else {
                 $containerOs = "unknown"
             }
@@ -301,6 +307,12 @@ function New-BcImage {
         
             if ($hostOsVersion -eq $containerOsVersion) {
                 if ($isolation -eq "") { 
+                    $isolation = "process"
+                }
+            }
+            elseif ("$hostOsVersion".StartsWith('10.0.19043.') -and "$containerOsVersion".StartsWith("10.0.19041.")) {
+                if ($isolation -eq "") {
+                    Write-Host -ForegroundColor Yellow "WARNING: Host OS is 21H1 and Container OS is 2004, defaulting to process isolation. If you experience problems, add -isolation hyperv."
                     $isolation = "process"
                 }
             }
@@ -537,7 +549,22 @@ LABEL legal="http://go.microsoft.com/fwlink/?LinkId=837447" \
       platform="$($appManifest.Platform)"
 "@ | Set-Content (Join-Path $buildFolder "DOCKERFILE")
 
-docker build --isolation=$isolation --memory $memory --tag $imageName $buildFolder | Out-Host
+                $success = $false
+                try {
+                    docker build --isolation=$isolation --memory $memory --tag $imageName $buildFolder | % {
+                        $_ | Out-Host
+                        if ($_ -like "Successfully built*") {
+                            $success = $true
+                        }
+                    }
+                } catch {}
+                if (!$success) {
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "Docker Build failed with exit code $LastExitCode"
+                    } else {
+                        throw "Docker Build didn't indicate successfully built"
+                    }
+                }
 
                 $timespend = [Math]::Round([DateTime]::Now.Subtract($startTime).Totalseconds)
                 Write-Host "Building image took $timespend seconds"

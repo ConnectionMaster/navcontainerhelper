@@ -10,6 +10,8 @@
   The folder to which the bak files are exported (default is the container folder c:\programdata\bccontainerhelper\extensions\<containername>)
  .Parameter tenant
   The tenant database(s) to restore, only applies to multi-tenant containers. Omit to restore all tenants
+ .Parameter sqlTimeout
+  SQL Timeout for database restore operations
  .Example
   Restore-DatabasesInBcContainer -containerName test
  .Example
@@ -28,6 +30,9 @@ function Restore-DatabasesInBcContainer {
         [string] $databaseFolder = "c:\databases",
         [int] $sqlTimeout = 300
     )
+
+$telemetryScope = InitTelemetryScope -name $MyInvocation.InvocationName -parameterValues $PSBoundParameters -includeParameters @()
+try {
 
     $containerBakFile = ""
     $containerBakFolder = ""
@@ -134,7 +139,14 @@ function Restore-DatabasesInBcContainer {
             Remove-Item -Path $_.FullName -Force -Recurse
         }
     }
-
+}
+catch {
+    TrackException -telemetryScope $telemetryScope -errorRecord $_
+    throw
+}
+finally {
+    TrackTrace -telemetryScope $telemetryScope
+}
 }
 Set-Alias -Name Restore-DatabasesInNavContainer -Value Restore-DatabasesInBcContainer
 Export-ModuleMember -Function Restore-DatabasesInBcContainer -Alias Restore-DatabasesInNavContainer

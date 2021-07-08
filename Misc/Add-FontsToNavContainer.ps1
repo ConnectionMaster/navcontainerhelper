@@ -6,7 +6,7 @@
  .Parameter containerName
   Name of the container to which you want to copy fonts
  .Parameter path
-  Path to fonts to copy and register in the container
+  Path or array of paths to fonts to copy and register in the container.
  .Example
   Add-FontsToBcContainer
  .Example
@@ -15,14 +15,19 @@
   Add-FontsToBcContainer -containerName test2 -path "C:\Windows\Fonts\ming*.*"
  .Example
   Add-FontsToBcContainer -containerName test2 -path "C:\Windows\Fonts\mingliu.ttc"
+ .Example
+  Add-FontsToBcContainer -containerName test2 -path @("C:\Windows\Fonts\", ".\myfonts\")
 #>
 function Add-FontsToBcContainer {
    Param (
         [Parameter(Mandatory=$false)]
         [string] $containerName = $bcContainerHelperConfig.defaultContainerName, 
         [Parameter(Mandatory=$false)]
-        [string] $path = "C:\Windows\Fonts"
+        [string[]] $path = @("C:\Windows\Fonts")
     )
+
+$telemetryScope = InitTelemetryScope -name $MyInvocation.InvocationName -parameterValues $PSBoundParameters -includeParameters @()
+try {
 
     $ExistingFonts = Invoke-ScriptInBcContainer -containerName $containerName -ScriptBlock {
         $fontsFolderPath = "C:\Windows\Fonts"
@@ -56,6 +61,14 @@ function Add-FontsToBcContainer {
             . $addFontsScript
         } -argumentList (Get-BcContainerPath -containerName $containerName -path (Join-Path $fontsFolder "AddFonts.ps1"))
     }
+}
+catch {
+    TrackException -telemetryScope $telemetryScope -errorRecord $_
+    throw
+}
+finally {
+    TrackTrace -telemetryScope $telemetryScope
+}
 }
 Set-Alias -Name Add-FontsToNavContainer -Value Add-FontsToBcContainer
 Export-ModuleMember -Function Add-FontsToBcContainer -Alias Add-FontsToNavContainer

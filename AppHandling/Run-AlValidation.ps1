@@ -200,6 +200,10 @@ function GetFilePath( [string] $path ) {
     }
 }
 
+$telemetryScope = InitTelemetryScope -name $MyInvocation.InvocationName -parameterValues $PSBoundParameters -includeParameters @()
+try {
+
+$warningsToShow = @()
 $validationResult = @()
 
 if ($memoryLimit -eq "") {
@@ -216,9 +220,9 @@ if ($countries                      -is [String]) { $countries = @($countries.Sp
 if ($affixes                        -is [String]) { $affixes = @($affixes.Split(',').Trim() | Where-Object { $_ }) }
 if ($supportedCountries             -is [String]) { $supportedCountries = @($supportedCountries.Split(',').Trim() | Where-Object { $_ }) }
 
-$installApps = $installApps | % { GetFilePath $_ }
-$previousApps = $previousApps | % { GetFilePath $_ }
-$apps = $apps | % { GetFilePath $_ }
+$installApps = @($installApps | ForEach-Object { GetFilePath $_ })
+$previousApps = @($previousApps | ForEach-Object { GetFilePath $_ })
+$apps = @($apps | ForEach-Object { GetFilePath $_ })
 
 $countries = @($countries | Where-Object { $_ } | ForEach-Object { getCountryCode -countryCode $_ })
 $validateCountries = @($countries | ForEach-Object {
@@ -434,6 +438,18 @@ Measure-Command {
 
     Invoke-Command -ScriptBlock $NewBcContainer -ArgumentList $Parameters
 
+    $Parameters = @{
+        "containerName" = $containerName
+        "tenant" = $tenant
+        "credential" = $credential
+        "appFile" = "https://businesscentralapps.blob.core.windows.net/enableencryption/latest/apps.zip"
+        "skipVerification" = $true
+        "sync" = $true
+        "install" = $true
+        "useDevEndpoint" = $false
+    }
+    Invoke-Command -ScriptBlock $PublishBcContainerApp -ArgumentList $Parameters
+
 } | ForEach-Object { Write-Host -ForegroundColor Yellow "`nCreating container took $([int]$_.TotalSeconds) seconds" }
 
 if ($installApps) {
@@ -457,7 +473,7 @@ Measure-Command {
             "tenant" = $tenant
             "credential" = $credential
             "appFile" = $_
-            "skipVerification" = $skipVerification
+            "skipVerification" = $true
             "sync" = $true
             "install" = $true
         }
@@ -523,7 +539,7 @@ try {
             "tenant" = $tenant
             "credential" = $credential
             "appFile" = $_
-            "skipVerification" = $skipVerification
+            "skipVerification" = $true
             "sync" = $true
             "install" = $true
             "useDevEndpoint" = $false
@@ -569,6 +585,9 @@ try {
         Extract-AppFileToFolder -appFilename $_ -appFolder $tmpFolder -generateAppJson
         $appJsonFile = Join-Path $tmpfolder "app.json"
         $appJson = Get-Content $appJsonFile | ConvertFrom-Json
+        if ($appJson.ShowMyCode) {
+            $warningsToShow += "NOTE: $([System.IO.Path]::GetFileName($_)) has ShowMyCode set to true. This means that people will be able to debug and see the source code of your app. (see https://aka.ms/showMyCode)"
+        }
         Remove-Item $tmpFolder -Recurse -Force
     
         $installedApp = $installedApps | Where-Object { $_.Name -eq $appJson.Name -and $_.Publisher -eq $appJson.Publisher -and $_.AppId -eq $appJson.Id }
@@ -716,5 +735,16 @@ Write-Host -ForegroundColor Green @'
 '@
 }
 
+if ($warningsToShow) {
+    ($warningsToShow -join "`n") | Write-Host -ForegroundColor Yellow
+}
+}
+catch {
+    TrackException -telemetryScope $telemetryScope -errorRecord $_
+    throw
+}
+finally {
+    TrackTrace -telemetryScope $telemetryScope
+}
 }
 Export-ModuleMember -Function Run-AlValidation

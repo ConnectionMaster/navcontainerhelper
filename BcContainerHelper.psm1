@@ -38,12 +38,16 @@ function Get-ContainerHelperConfig {
             "timeStampServer" = "http://timestamp.digicert.com"
             "sandboxContainersAreMultitenantByDefault" = $true
             "useSharedEncryptionKeys" = $true
+            "DOCKER_SCAN_SUGGEST" = $false
             "psSessionTimeout" = 0
             "mapCountryCode" = [PSCustomObject]@{
                 "ae" = "w1"
                 "br" = "w1"
+                "bd" = "w1"
                 "co" = "w1"
+                "dz" = "w1"
                 "ee" = "w1"
+                "eg" = "w1"
                 "fo" = "dk"
                 "gl" = "dk"
                 "gr" = "w1"
@@ -53,35 +57,56 @@ function Get-ContainerHelperConfig {
                 "id" = "w1"
                 "ie" = "w1"
                 "jp" = "w1"
+                "ke" = "w1"
                 "kr" = "w1"
+                "lb" = "w1"
+                "lk" = "w1"
                 "lt" = "w1"
+                "lu" = "w1"
                 "lv" = "w1"
+                "ma" = "w1"
+                "mm" = "w1"
+                "mt" = "w1"
                 "my" = "w1"
+                "ng" = "w1"
                 "pe" = "w1"
                 "ph" = "w1"
                 "pl" = "w1"
+                "qa" = "w1"
                 "rs" = "w1"
                 "ro" = "w1"
+                "sa" = "w1"
                 "sg" = "w1"
                 "si" = "w1"
                 "th" = "w1"
+                "tn" = "w1"
                 "tw" = "w1"
                 "vn" = "w1"
                 "za" = "w1"
             }
+            "TraefikUseDnsNameAsHostName" = $false
+            "TreatWarningsAsErrors" = @('AL1026')
+            "TelemetryConnectionString" = ""
         }
         $bcContainerHelperConfigFile = "C:\ProgramData\BcContainerHelper\BcContainerHelper.config.json"
         if (Test-Path $bcContainerHelperConfigFile) {
-            $savedConfig = Get-Content $bcContainerHelperConfigFile | ConvertFrom-Json
-            $keys = $bcContainerHelperConfig.Keys | % { $_ }
-            $keys | % {
-                if ($savedConfig.PSObject.Properties.Name -eq "$_") {
-                    if (!$silent) {
-                        Write-Host "Setting $_ = $($savedConfig."$_")"
+            try {
+                $savedConfig = Get-Content $bcContainerHelperConfigFile | ConvertFrom-Json
+                if ("$savedConfig") {
+                    $keys = $bcContainerHelperConfig.Keys | % { $_ }
+                    $keys | % {
+                        if ($savedConfig.PSObject.Properties.Name -eq "$_") {
+                            if (!$silent) {
+                                Write-Host "Setting $_ = $($savedConfig."$_")"
+                            }
+                            $bcContainerHelperConfig."$_" = $savedConfig."$_"
+            
+                        }
                     }
-                    $bcContainerHelperConfig."$_" = $savedConfig."$_"
-        
                 }
+            }
+            catch {
+                throw "Error reading configuration file $bcContainerHelperConfigFile, cannot import module."
             }
         }
         Export-ModuleMember -Variable bcContainerHelperConfig
@@ -129,7 +154,10 @@ $Source = @"
  	}
 "@;
  
-Add-Type -TypeDefinition $Source -Language CSharp -WarningAction SilentlyContinue | Out-Null
+try {
+    Add-Type -TypeDefinition $Source -Language CSharp -WarningAction SilentlyContinue | Out-Null
+}
+catch {}
 
 $hostHelperFolder = $bcContainerHelperConfig.HostHelperFolder
 $extensionsFolder = Join-Path $hostHelperFolder "Extensions"
@@ -139,6 +167,14 @@ $BcContainerHelperVersion = Get-Content (Join-Path $PSScriptRoot "Version.txt")
 if (!$silent) {
     Write-Host "BcContainerHelper version $BcContainerHelperVersion"
 }
+
+$ENV:DOCKER_SCAN_SUGGEST = "$($bcContainerHelperConfig.DOCKER_SCAN_SUGGEST)".ToLowerInvariant()
+
+try {
+    Add-Type -path (Join-Path $PSScriptRoot "Microsoft.ApplicationInsights.dll") -ErrorAction SilentlyContinue
+} catch {}
+$telemetryClient = New-Object Microsoft.ApplicationInsights.TelemetryClient
+$telemetryClient.TelemetryConfiguration.DisableTelemetry = $true
 
 $sessions = @{}
 
@@ -157,6 +193,7 @@ if (!(Test-Path -Path $extensionsFolder -PathType Container)) {
 }
 
 . (Join-Path $PSScriptRoot "HelperFunctions.ps1")
+. (Join-Path $PSScriptRoot "TelemetryHelper.ps1")
 . (Join-Path $PSScriptRoot "Check-BcContainerHelperPermissions.ps1")
 
 Check-BcContainerHelperPermissions -Silent
@@ -212,6 +249,7 @@ Check-BcContainerHelperPermissions -Silent
 . (Join-Path $PSScriptRoot "ContainerHandling\Flush-ContainerHelperCache.ps1")
 . (Join-Path $PSScriptRoot "ContainerHandling\Get-LatestAlLanguageExtensionUrl.ps1")
 . (Join-Path $PSScriptRoot "ContainerHandling\Get-AlLanguageExtensionFromArtifacts.ps1")
+. (Join-Path $PSScriptRoot "ContainerHandling\traefik\Add-DomainToTraefikConfig.ps1")
 
 # Object Handling functions
 . (Join-Path $PSScriptRoot "ObjectHandling\Export-NavContainerObjects.ps1")

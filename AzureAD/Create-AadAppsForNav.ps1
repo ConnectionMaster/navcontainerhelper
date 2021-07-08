@@ -18,6 +18,8 @@
   Add this switch to request the function to also create an AAD app for the PowerBI service
  .Parameter IncludeEMailAadApp
   Add this switch to request the function to also create an AAD app for the EMail service
+ .Parameter IncludeApiAccess
+  Add this switch to add application permissions for Web Services API and automation API
  .Parameter useCurrentAzureAdConnection
   Specify this switch to use the current Azure AD Connection instead of invoking Connect-AzureAD (which will pop up a UI)
  .Example
@@ -36,6 +38,7 @@ function Create-AadAppsForNav {
         [switch] $IncludeExcelAadApp,
         [switch] $IncludePowerBiAadApp,
         [switch] $IncludeEmailAadApp,
+        [switch] $IncludeApiAccess,
         [switch] $useCurrentAzureAdConnection,
         [Hashtable] $bcAuthContext
     )
@@ -50,6 +53,9 @@ function Create-AadAppsForNav {
         [System.Convert]::ToBase64String($aesManaged.Key)
     }
     
+$telemetryScope = InitTelemetryScope -name $MyInvocation.InvocationName -parameterValues $PSBoundParameters -includeParameters @()
+try {
+
     if (!(Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction Ignore)) {
         Write-Host "Installing NuGet Package Provider"
         Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -WarningAction Ignore | Out-Null
@@ -70,7 +76,7 @@ function Create-AadAppsForNav {
         if ($jwtToken.aud -ne 'https://graph.windows.net') {
             Write-Host -ForegroundColor Yellow "The accesstoken was provided for $($jwtToken.aud), should have been for https://graph.windows.net"
         }
-        Connect-AzureAD -AadAccessToken $bcAuthContext.accessToken -AccountId $jwtToken.upn
+        $account = Connect-AzureAD -AadAccessToken $bcAuthContext.accessToken -AccountId $jwtToken.upn
     }
     else {
         if ($AadAdminCredential) {
@@ -137,9 +143,20 @@ function Create-AadAppsForNav {
     $req1.ResourceAccess = New-Object -TypeName "Microsoft.Open.AzureAD.Model.ResourceAccess" -ArgumentList "311a71cc-e848-46a1-bdf8-97ff7156d8e6","Scope"
 
     # Dynamics 365 Business Central -> Delegated permissions for Access as the signed-in user (Financials.ReadWrite.All)
+    # Dynamics 365 Business Central -> Application permissions for Full access to Web Services API (API.ReadWrite.All)
+    # Dynamics 365 Business Central -> Application permissions Full access to automation (Automation.ReadWrite.All)
     $req2 = New-Object -TypeName "Microsoft.Open.AzureAD.Model.RequiredResourceAccess" 
     $req2.ResourceAppId = "996def3d-b36c-4153-8607-a6fd3c01b89f"
-    $req2.ResourceAccess = New-Object -TypeName "Microsoft.Open.AzureAD.Model.ResourceAccess" -ArgumentList "2fb13c28-9d89-417f-9af2-ec3065bc16e6","Scope"
+    if ($IncludeApiAccess) {
+        $req2.ResourceAccess = @(
+            New-Object -TypeName "Microsoft.Open.AzureAD.Model.ResourceAccess" -ArgumentList "2fb13c28-9d89-417f-9af2-ec3065bc16e6","Scope"
+            New-Object -TypeName "Microsoft.Open.AzureAD.Model.ResourceAccess" -ArgumentList "a42b0b75-311e-488d-b67e-8fe84f924341","Role"
+            New-Object -TypeName "Microsoft.Open.AzureAD.Model.ResourceAccess" -ArgumentList "d365bc00-a990-0000-00bc-160000000001","Role"
+        )
+    }
+    else {
+        $req2.ResourceAccess = New-Object -TypeName "Microsoft.Open.AzureAD.Model.ResourceAccess" -ArgumentList "2fb13c28-9d89-417f-9af2-ec3065bc16e6","Scope"
+    }
 
     Set-AzureADApplication -ObjectId $ssoAdApp.ObjectId -RequiredResourceAccess @($req1, $req2)
 
@@ -258,6 +275,14 @@ function Create-AadAppsForNav {
     }
 
     $AdProperties
+}
+catch {
+    TrackException -telemetryScope $telemetryScope -errorRecord $_
+    throw
+}
+finally {
+    TrackTrace -telemetryScope $telemetryScope
+}
 }
 Set-Alias -Name Create-AadAppsForBC -Value Create-AadAppsForNav
 Export-ModuleMember -Function Create-AadAppsForNav -Alias Create-AadAppsForBC

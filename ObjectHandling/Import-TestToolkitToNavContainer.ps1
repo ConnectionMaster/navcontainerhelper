@@ -71,6 +71,9 @@ function Import-TestToolkitToBcContainer {
 
     )
 
+$telemetryScope = InitTelemetryScope -name $MyInvocation.InvocationName -parameterValues $PSBoundParameters -includeParameters @()
+try {
+
     if ($replaceDependencies) {
         $doNotUseRuntimePackages = $true
     }
@@ -102,7 +105,11 @@ function Import-TestToolkitToBcContainer {
                 Get-NAVAppInfo -Path $appFile
             } -argumentList $_ | Where-Object { $_ -isnot [System.String] }
 
-            Install-BcAppFromAppSource -containerName $containerName -bcAuthContext $bcauthcontext -environment $environment -appId $appInfo.AppId -appName $appInfo.Name
+            $targetVersion = ""
+            if ($appInfo.Version.Major -eq 18 -and $appInfo.Version.Minor -eq 0) {
+                $targetVersion = "18.0.23013.23913"
+            }
+            Install-BcAppFromAppSource -bcAuthContext $bcauthcontext -environment $environment -appId $appInfo.AppId -appVersion $targetVersion -acceptIsvEula -installOrUpdateNeededDependencies
         }
         Write-Host -ForegroundColor Green "TestToolkit successfully published"
     }
@@ -260,6 +267,14 @@ function Import-TestToolkitToBcContainer {
             Write-Host -ForegroundColor Green "TestToolkit successfully imported"
         }
     }
+}
+catch {
+    TrackException -telemetryScope $telemetryScope -errorRecord $_
+    throw
+}
+finally {
+    TrackTrace -telemetryScope $telemetryScope
+}
 }
 Set-Alias -Name Import-TestToolkitToNavContainer -Value Import-TestToolkitToBcContainer
 Export-ModuleMember -Function Import-TestToolkitToBcContainer -Alias Import-TestToolkitToNavContainer

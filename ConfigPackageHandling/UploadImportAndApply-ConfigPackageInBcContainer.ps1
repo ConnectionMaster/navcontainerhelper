@@ -27,6 +27,9 @@ function UploadImportAndApply-ConfigPackageInBcContainer {
         [string] $packageId = ""
     )
 
+$telemetryScope = InitTelemetryScope -name $MyInvocation.InvocationName -parameterValues $PSBoundParameters -includeParameters @()
+try {
+
     if (Test-Path $configPackage -PathType Leaf) {
         $configFile = Get-Item -Path $configPackage
         if ($configFile -is [Array]) {
@@ -137,7 +140,7 @@ function UploadImportAndApply-ConfigPackageInBcContainer {
             }
         } while ($continue)
         if ($status -eq "Error") {
-            throw "Couldn't import configuration package"
+            throw "Couldn't import configuration package, error is $($result.importError)"
         }
         else {
             Write-Host "Applying Configuration Package $packageId"
@@ -173,9 +176,17 @@ function UploadImportAndApply-ConfigPackageInBcContainer {
                 }
             } while ($continue)
             if ($status -eq "Error") {
-                throw "Couldn't apply configuration package"
+                throw "Couldn't apply configuration package, error is $($result.applyError)"
             }
         }
     }
+}
+catch {
+    TrackException -telemetryScope $telemetryScope -errorRecord $_
+    throw
+}
+finally {
+    TrackTrace -telemetryScope $telemetryScope
+}
 }
 Export-ModuleMember -Function UploadImportAndApply-ConfigPackageInBcContainer

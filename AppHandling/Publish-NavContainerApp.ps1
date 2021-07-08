@@ -10,6 +10,8 @@
   Path of the app you want to publish  
  .Parameter skipVerification
   Include this parameter if the app you want to publish is not signed
+ .Parameter ignoreIfAppExists
+  Include this parameter if you want to ignore the error if the app already is published/installed
  .Parameter sync
   Include this parameter if you want to synchronize the app after publishing
  .Parameter syncMode
@@ -55,6 +57,7 @@ function Publish-BcContainerApp {
         [Parameter(Mandatory=$true)]
         $appFile,
         [switch] $skipVerification,
+        [switch] $ignoreIfAppExists,
         [switch] $sync,
         [Parameter(Mandatory=$false)]
         [ValidateSet('Add','Clean','Development','ForceSync')]
@@ -80,6 +83,9 @@ function Publish-BcContainerApp {
         [string] $environment
     )
 
+$telemetryScope = InitTelemetryScope -name $MyInvocation.InvocationName -parameterValues $PSBoundParameters -includeParameters @()
+try {
+
     Add-Type -AssemblyName System.Net.Http
 
     if ($containerName -eq "" -and (!($bcAuthContext -and $environment))) {
@@ -100,10 +106,14 @@ function Publish-BcContainerApp {
         else {
             $appFiles = CopyAppFilesToFolder -appFiles $appFile -folder $appFolder
         }
+        $navversion = Get-BcContainerNavversion -containerOrImageName $containerName
+        $version = [System.Version]($navversion.split('-')[0])
+        $force = ($version.Major -ge 14)
     }
     else {
         $appFolder = Join-Path (Get-TempDir) ([guid]::NewGuid().ToString())
         $appFiles = CopyAppFilesToFolder -appFiles $appFile -folder $appFolder
+        $force = $true
     }
 
     try {
@@ -250,7 +260,7 @@ function Publish-BcContainerApp {
             }
             else {
         
-                Invoke-ScriptInBcContainer -containerName $containerName -ScriptBlock { Param($appFile, $skipVerification, $sync, $install, $upgrade, $tenant, $syncMode, $packageType, $scope, $language, $PublisherAzureActiveDirectoryTenantId)
+                Invoke-ScriptInBcContainer -containerName $containerName -ScriptBlock { Param($appFile, $skipVerification, $sync, $install, $upgrade, $tenant, $syncMode, $packageType, $scope, $language, $PublisherAzureActiveDirectoryTenantId, $force, $ignoreIfAppExists)
         
                     $publishArgs = @{ "packageType" = $packageType }
                     if ($scope) {
@@ -262,9 +272,35 @@ function Publish-BcContainerApp {
                     if ($PublisherAzureActiveDirectoryTenantId) {
                         $publishArgs += @{ "PublisherAzureActiveDirectoryTenantId" = $PublisherAzureActiveDirectoryTenantId }
                     }
+                    if ($force) {
+                        $publishArgs += @{ "Force" = $true }
+                    }
+                    
+                    $publishIt = $true
+                    if ($ignoreIfAppExists) {
+                        $navAppInfo = Get-NAVAppInfo -Path $appFile
+                        $addArg = @{
+                            "tenantSpecificProperties" = $true
+                            "tenant" = $tenant
+                        }
+                        if ($packageType -eq "SymbolsOnly") {
+                            $addArg = @{ "SymbolsOnly" = $true }
+                        }
+                        $appInfo = (Get-NAVAppInfo -ServerInstance $serverInstance -Name $navAppInfo.Name -Publisher $navAppInfo.Publisher -Version $navAppInfo.Version @addArg)
+                        if ($appInfo) {
+                            $publishIt = $false
+                            Write-Host "$($navAppInfo.Name) is already published"
+                            if ($appInfo.IsInstalled) {
+                                $install = $false
+                                Write-Host "$($navAppInfo.Name) is already installed"
+                            }
+                        }
+                    }
             
-                    Write-Host "Publishing $appFile"
-                    Publish-NavApp -ServerInstance $ServerInstance -Path $appFile -SkipVerification:$SkipVerification @publishArgs -force
+                    if ($publishIt) {
+                        Write-Host "Publishing $appFile"
+                        Publish-NavApp -ServerInstance $ServerInstance -Path $appFile -SkipVerification:$SkipVerification @publishArgs
+                    }
         
                     if ($sync -or $install -or $upgrade) {
         
@@ -305,7 +341,7 @@ function Publish-BcContainerApp {
                         }
                     }
         
-                } -ArgumentList (Get-BcContainerPath -containerName $containerName -path $appFile), $skipVerification, $sync, $install, $upgrade, $tenant, $syncMode, $packageType, $scope, $language, $PublisherAzureActiveDirectoryTenantId
+                } -ArgumentList (Get-BcContainerPath -containerName $containerName -path $appFile), $skipVerification, $sync, $install, $upgrade, $tenant, $syncMode, $packageType, $scope, $language, $PublisherAzureActiveDirectoryTenantId, $force, $ignoreIfAppExists
             }
             Write-Host -ForegroundColor Green "App $([System.IO.Path]::GetFileName($appFile)) successfully published"
         }
@@ -313,6 +349,14 @@ function Publish-BcContainerApp {
     finally {
         Remove-Item $appFolder -Recurse -Force
     }
+}
+catch {
+    TrackException -telemetryScope $telemetryScope -errorRecord $_
+    throw
+}
+finally {
+    TrackTrace -telemetryScope $telemetryScope
+}
 }
 Set-Alias -Name Publish-NavContainerApp -Value Publish-BcContainerApp
 Export-ModuleMember -Function Publish-BcContainerApp -Alias Publish-NavContainerApp

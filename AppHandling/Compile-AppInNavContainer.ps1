@@ -42,6 +42,8 @@
   Specify a nowarn parameter for the compiler
  .Parameter preProcessorSymbols
   PreProcessorSymbols to set when compiling the app.
+ .Parameter generatecrossreferences
+  Include this flag to generate cross references when compiling
  .Parameter bcAuthContext
   Authorization Context created by New-BcAuthContext. By specifying BcAuthContext and environment, the compile function will use the online Business Central Environment as target for the compilation
  .Parameter environment
@@ -89,6 +91,7 @@ function Compile-AppInBcContainer {
         [Parameter(Mandatory=$false)]
         [string] $nowarn,
         [string[]] $preProcessorSymbols = @(),
+        [switch] $GenerateCrossReferences,
         [Parameter(Mandatory=$false)]
         [string] $assemblyProbingPaths,
         [Parameter(Mandatory=$false)]
@@ -96,8 +99,12 @@ function Compile-AppInBcContainer {
         [string[]] $features,
         [Hashtable] $bcAuthContext,
         [string] $environment,
+        [string[]] $treatWarningsAsErrors = $bcContainerHelperConfig.TreatWarningsAsErrors,
         [scriptblock] $outputTo = { Param($line) Write-Host $line }
     )
+
+$telemetryScope = InitTelemetryScope -name $MyInvocation.InvocationName -parameterValues $PSBoundParameters -includeParameters @()
+try {
 
     $startTime = [DateTime]::Now
 
@@ -244,7 +251,11 @@ function Compile-AppInBcContainer {
 
     if (!$updateSymbols) {
         $existingApps = Invoke-ScriptInBcContainer -containerName $containerName -ScriptBlock { Param($appSymbolsFolder)
-            Get-ChildItem -Path (Join-Path $appSymbolsFolder '*.app') | ForEach-Object { Get-NavAppInfo -Path $_.FullName }
+            Get-ChildItem -Path (Join-Path $appSymbolsFolder '*.app') | ForEach-Object {
+                $appInfo = Get-NavAppInfo -Path $_.FullName
+                #Write-Host "FileName=$($_.FullName), AppId=$($appInfo.AppId), Publisher=$($appInfo.Publisher), Name=$($appInfo.Name), Version=$($appInfo.Version)"
+                $appInfo
+            }
         } -ArgumentList $containerSymbolsFolder
     }
     $publishedApps = @()
@@ -344,7 +355,7 @@ function Compile-AppInBcContainer {
     $depidx = 0
     while ($depidx -lt $dependencies.Count) {
         $dependency = $dependencies[$depidx]
-        if ($updateSymbols -or !($existingApps | Where-Object {($_.Name -eq $dependency.name) -and ($_.Name -eq "Application" -or $_.Publisher -eq $dependency.publisher)})) {
+        if ($updateSymbols -or !($existingApps | Where-Object {($_.Name -eq $dependency.name) -and ($_.Name -eq "Application" -or (($_.Publisher -eq $dependency.publisher) -and ([System.Version]$_.Version -ge [System.Version]$dependency.version)))})) {
             $publisher = $dependency.publisher
             $name = $dependency.name
             $version = $dependency.version
@@ -367,6 +378,7 @@ function Compile-AppInBcContainer {
                     $webClient.DownloadFile($url, $symbolsFile)
                 }
                 catch [System.Net.WebException] {
+                    Write-Host "ERROR $($_.Exception.Message)"
                     throw (GetExtenedErrorMessage $_.Exception)
                 }
                 if (Test-Path -Path $symbolsFile) {
@@ -375,15 +387,16 @@ function Compile-AppInBcContainer {
                         While (-not (Test-Path $symbolsFile)) { Start-Sleep -Seconds 1 }
     
                         if ($platformversion.Major -ge 15) {
-                            $alcPath = 'C:\build\vsix\extension\bin'
                             Add-Type -AssemblyName System.IO.Compression.FileSystem
                             Add-Type -AssemblyName System.Text.Encoding
             
-                            # Import types needed to invoke the compiler
-                            Add-Type -Path (Join-Path $alcPath System.Collections.Immutable.dll)
-                            Add-Type -Path (Join-Path $alcPath Microsoft.Dynamics.Nav.CodeAnalysis.dll)
-        
                             try {
+                                # Import types needed to invoke the compiler
+                                $alcPath = 'C:\build\vsix\extension\bin'
+                                Add-Type -Path (Join-Path $alcPath Newtonsoft.Json.dll)
+                                Add-Type -Path (Join-Path $alcPath System.Collections.Immutable.dll)
+                                Add-Type -Path (Join-Path $alcPath Microsoft.Dynamics.Nav.CodeAnalysis.dll)
+
                                 $packageStream = [System.IO.File]::OpenRead($symbolsFile)
                                 $package = [Microsoft.Dynamics.Nav.CodeAnalysis.Packaging.NavAppPackageReader]::Create($PackageStream, $true)
                                 $manifest = $package.ReadNavAppManifest()
@@ -395,6 +408,14 @@ function Compile-AppInBcContainer {
                                 foreach ($dependency in $manifest.dependencies) {
                                     @{ "publisher" = $dependency.Publisher; "name" = $dependency.name; "Version" = $dependency.Version }
                                 }
+                            }
+                            catch [System.Reflection.ReflectionTypeLoadException] {
+                                if ($_.Exception.LoaderExceptions) {
+                                    $_.Exception.LoaderExceptions | % {
+                                        Write-Host "LoaderException: $($_.Message)"
+                                    }
+                                }
+                                throw
                             }
                             finally {
                                 if ($package) {
@@ -431,7 +452,7 @@ function Compile-AppInBcContainer {
         [SslVerification]::Enable()
     }
 
-    $result = Invoke-ScriptInBcContainer -containerName $containerName -ScriptBlock { Param($appProjectFolder, $appSymbolsFolder, $appOutputFile, $EnableCodeCop, $EnableAppSourceCop, $EnablePerTenantExtensionCop, $EnableUICop, $rulesetFile, $assemblyProbingPaths, $nowarn, $generateReportLayoutParam, $features, $preProcessorSymbols )
+    $result = Invoke-ScriptInBcContainer -containerName $containerName -ScriptBlock { Param($appProjectFolder, $appSymbolsFolder, $appOutputFile, $EnableCodeCop, $EnableAppSourceCop, $EnablePerTenantExtensionCop, $EnableUICop, $rulesetFile, $assemblyProbingPaths, $nowarn, $GenerateCrossReferences, $generateReportLayoutParam, $features, $preProcessorSymbols )
 
         $binPath = 'C:\build\vsix\extension\bin'
         $alcPath = Join-Path $binPath 'win32'
@@ -471,6 +492,10 @@ function Compile-AppInBcContainer {
             $alcParameters += @("/nowarn:$nowarn")
         }
 
+        if ($GenerateCrossReferences) {
+            $alcParameters += @("/generatecrossreferences")
+        }
+
         if ($assemblyProbingPaths) {
             $alcParameters += @("/assemblyprobingpaths:$assemblyProbingPaths")
         }
@@ -488,14 +513,19 @@ function Compile-AppInBcContainer {
         if ($lastexitcode -ne 0) {
             "App generation failed with exit code $lastexitcode"
         }
-    } -ArgumentList $containerProjectFolder, $containerSymbolsFolder, (Join-Path $containerOutputFolder $appName), $EnableCodeCop, $EnableAppSourceCop, $EnablePerTenantExtensionCop, $EnableUICop, $containerRulesetFile, $assemblyProbingPaths, $nowarn, $GenerateReportLayoutParam, $features, $preProcessorSymbols
+    } -ArgumentList $containerProjectFolder, $containerSymbolsFolder, (Join-Path $containerOutputFolder $appName), $EnableCodeCop, $EnableAppSourceCop, $EnablePerTenantExtensionCop, $EnableUICop, $containerRulesetFile, $assemblyProbingPaths, $nowarn, $GenerateCrossReferences, $GenerateReportLayoutParam, $features, $preProcessorSymbols
     
+    if ($treatWarningsAsErrors) {
+        $regexp = ($treatWarningsAsErrors | ForEach-Object { if ($_ -eq '*') { ".*" } else { $_ } }) -join '|'
+        $result = $result | ForEach-Object { $_ -replace "^(.*)warning ($regexp):(.*)`$", '$1error $2:$3' }
+    }
+
     $devOpsResult = ""
     if ($result) {
         $devOpsResult = Convert-ALCOutputToAzureDevOps -FailOn $FailOn -AlcOutput $result -DoNotWriteToHost
     }
     if ($AzureDevOps) {
-        $devOpsResult | % { $outputTo.Invoke($_) }
+        $devOpsResult | ForEach-Object { $outputTo.Invoke($_) }
     }
     else {
         $result | % { $outputTo.Invoke($_) }
@@ -526,6 +556,14 @@ function Compile-AppInBcContainer {
         throw "App generation failed"
     }
     $appFile
+}
+catch {
+    TrackException -telemetryScope $telemetryScope -errorRecord $_
+    throw
+}
+finally {
+    TrackTrace -telemetryScope $telemetryScope
+}
 }
 Set-Alias -Name Compile-AppInNavContainer -Value Compile-AppInBcContainer
 Export-ModuleMember -Function Compile-AppInBcContainer -Alias Compile-AppInNavContainer

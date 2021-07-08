@@ -35,6 +35,9 @@ function Sign-BcContainerApp {
         [string] $digestAlgorithm = $bcContainerHelperConfig.digestAlgorithm
     )
 
+$telemetryScope = InitTelemetryScope -name $MyInvocation.InvocationName -parameterValues $PSBoundParameters -includeParameters @()
+try {
+
     $containerAppFile = Get-BcContainerPath -containerName $containerName -path $appFile
     if ("$containerAppFile" -eq "") {
         throw "The app ($appFile)needs to be in a folder, which is shared with the container $containerName"
@@ -57,7 +60,7 @@ function Sign-BcContainerApp {
 
         if ($pfxFile.ToLower().StartsWith("http://") -or $pfxFile.ToLower().StartsWith("https://")) {
             $pfxUrl = $pfxFile
-            $pfxFile = Join-Path "c:\run" ([System.Uri]::UnescapeDataString([System.IO.Path]::GetFileName($pfxUrl).split("?")[0]))
+            $pfxFile = Join-Path "c:\run" ([System.Uri]::UnescapeDataString([System.IO.Path]::GetFileName($pfxUrl.split("?")[0])))
             (New-Object System.Net.WebClient).DownloadFile($pfxUrl, $pfxFile)
             $copied = $true
         }
@@ -118,6 +121,14 @@ function Sign-BcContainerApp {
             Remove-Item $pfxFile -Force
         }
     } -ArgumentList $containerAppFile, $containerPfxFile, $pfxPassword, $timeStampServer, $digestAlgorithm
+}
+catch {
+    TrackException -telemetryScope $telemetryScope -errorRecord $_
+    throw
+}
+finally {
+    TrackTrace -telemetryScope $telemetryScope
+}
 }
 Set-Alias -Name Sign-NavContainerApp -Value Sign-BcContainerApp
 Export-ModuleMember -Function Sign-BcContainerApp -Alias Sign-NavContainerApp
